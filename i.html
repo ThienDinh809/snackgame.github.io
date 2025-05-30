@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Snake Game - Enhanced with Sounds</title>
+<style>
+  body {
+    margin: 0;
+    background: #121212;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    user-select: none;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #eee;
+    flex-direction: column;
+  }
+  canvas {
+    background: #181818;
+    border-radius: 20px;
+    box-shadow:
+      0 0 15px rgba(0, 255, 100, 0.7),
+      inset 0 0 40px rgba(0, 255, 100, 0.3);
+    width: 450px;
+    height: 450px;
+    touch-action: none;
+    display: block;
+  }
+  #score {
+    margin: 1rem;
+    font-size: 1.7rem;
+    font-weight: 600;
+    text-shadow: 0 0 8px #00ff66;
+  }
+  #startMenu, #leaderboardOverlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    z-index: 10;
+  }
+  #startMenu button, #leaderboardOverlay button, #pauseBtn {
+    padding: 1rem 2rem;
+    font-size: 1.2rem;
+    border: none;
+    border-radius: 12px;
+    background: #00ff88;
+    color: #000;
+    cursor: pointer;
+    box-shadow: 0 0 10px #00ff88;
+    margin-top: 20px;
+  }
+  #pauseBtn {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 5;
+  }
+  #leaderboardOverlay {
+    display: none;
+  }
+  #leaderboardOverlay ul {
+    list-style: none;
+    padding: 0;
+    font-size: 1.2rem;
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+</style>
+</head>
+<body>
+
+<div id="score">Score: 0</div>
+<canvas id="game" tabindex="0"></canvas>
+<button id="pauseBtn" onclick="togglePause()">Pause</button>
+<div id="startMenu">
+  <h1>Snake Game</h1>
+  <p>Use arrow keys or swipe to control</p>
+  <button onclick="startGame()">Start Game</button>
+</div>
+<div id="leaderboardOverlay">
+  <h2>Leaderboard</h2>
+  <ul id="leaderboard"></ul>
+  <button onclick="restartGame()">Play Again</button>
+</div>
+
+<audio id="eatSound" src="https://cdn.pixabay.com/download/audio/2022/03/15/audio_9f15224c93.mp3?filename=bite-2-5791.mp3"></audio>
+<audio id="moveSound" src="https://cdn.pixabay.com/download/audio/2022/03/02/audio_fcbffb70ba.mp3?filename=cursor-move-143808.mp3"></audio>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+const startMenu = document.getElementById('startMenu');
+const leaderboardOverlay = document.getElementById('leaderboardOverlay');
+const leaderboardList = document.getElementById('leaderboard');
+const eatSound = document.getElementById('eatSound');
+const moveSound = document.getElementById('moveSound');
+
+let tileCount = 20;
+let snake, velocity, food, score, gameOver, frameCount;
+let paused = false;
+let speedDelay;
+let leaderboard = JSON.parse(localStorage.getItem('snakeLeaderboard') || '[]');
+
+function resizeCanvas() {
+  const size = Math.min(window.innerWidth, window.innerHeight) * 0.9;
+  canvas.width = size;
+  canvas.height = size;
+}
+
+function initGame() {
+  snake = [{ x: 9, y: 9 }];
+  velocity = { x: 0, y: 0 };
+  food = { x: 5, y: 5 };
+  score = 0;
+  gameOver = false;
+  frameCount = 0;
+  paused = false;
+  speedDelay = 160; // chậm lại 1 nửa so với 80ms ban đầu
+  scoreEl.textContent = 'Score: 0';
+}
+
+function startGame() {
+  initGame();
+  startMenu.style.display = 'none';
+  leaderboardOverlay.style.display = 'none';
+  gameLoop();
+}
+
+function restartGame() {
+  leaderboardOverlay.style.display = 'none';
+  startGame();
+}
+
+function showLeaderboard() {
+  leaderboard.push(score);
+  leaderboard.sort((a, b) => b - a);
+  leaderboard = leaderboard.slice(0, 5);
+  localStorage.setItem('snakeLeaderboard', JSON.stringify(leaderboard));
+  leaderboardList.innerHTML = leaderboard.map((s, i) => `<li>#${i + 1}: ${s}</li>`).join('');
+  leaderboardOverlay.style.display = 'flex';
+}
+
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+function drawGrid() {
+  const w = canvas.width;
+  const h = canvas.height;
+  const tileW = w / tileCount;
+  const tileH = h / tileCount;
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= tileCount; i++) {
+    ctx.beginPath(); ctx.moveTo(i * tileW, 0); ctx.lineTo(i * tileW, h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i * tileH); ctx.lineTo(w, i * tileH); ctx.stroke();
+  }
+}
+
+function drawFood() {
+  const w = canvas.width, h = canvas.height;
+  const tileW = w / tileCount, tileH = h / tileCount;
+  const cx = food.x * tileW + tileW / 2;
+  const cy = food.y * tileH + tileH / 2;
+  const maxRadius = Math.min(tileW, tileH) / 2.5;
+  const pulse = 0.15 * maxRadius * Math.sin(frameCount * 0.15) + maxRadius;
+  const gradient = ctx.createRadialGradient(cx, cy, pulse * 0.3, cx, cy, pulse);
+  gradient.addColorStop(0, '#ff6666');
+  gradient.addColorStop(0.5, '#ff2222');
+  gradient.addColorStop(1, 'transparent');
+  ctx.fillStyle = gradient;
+  ctx.beginPath(); ctx.arc(cx, cy, pulse, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ff4444';
+  ctx.shadowColor = '#ff8888';
+  ctx.shadowBlur = 12;
+  ctx.beginPath(); ctx.arc(cx, cy, maxRadius * 0.7, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function drawSnake() {
+  const w = canvas.width, h = canvas.height;
+  const tileW = w / tileCount, tileH = h / tileCount;
+  const grad = ctx.createLinearGradient(0, 0, w, h);
+  grad.addColorStop(0, '#00ff88');
+  grad.addColorStop(1, '#008855');
+  ctx.fillStyle = grad;
+  ctx.strokeStyle = '#002200';
+  ctx.lineWidth = 4;
+  snake.forEach(seg => {
+    const x = seg.x * tileW + 2, y = seg.y * tileH + 2;
+    const sizeW = tileW - 4, sizeH = tileH - 4;
+    ctx.shadowColor = 'rgba(0, 255, 136, 0.6)';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    const r = sizeW / 2;
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + sizeW, y, x + sizeW, y + sizeH, r);
+    ctx.arcTo(x + sizeW, y + sizeH, x, y + sizeH, r);
+    ctx.arcTo(x, y + sizeH, x, y, r);
+    ctx.arcTo(x, y, x + sizeW, y, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.stroke();
+  });
+}
+
+function update() {
+  if (gameOver || paused) return;
+  for (let i = snake.length - 1; i > 0; i--) snake[i] = { ...snake[i - 1] };
+  snake[0].x += velocity.x;
+  snake[0].y += velocity.y;
+  if (snake[0].x < 0) snake[0].x = tileCount - 1;
+  if (snake[0].x >= tileCount) snake[0].x = 0;
+  if (snake[0].y < 0) snake[0].y = tileCount - 1;
+  if (snake[0].y >= tileCount) snake[0].y = 0;
+  for (let i = 1; i < snake.length; i++)
+    if (snake[i].x === snake[0].x && snake[i].y === snake[0].y) gameOver = true;
+  if (snake[0].x === food.x && snake[0].y === food.y) {
+    score += 10; // mỗi lần ăn được 10 điểm
+    scoreEl.textContent = 'Score: ' + score;
+    snake.push({ ...snake[snake.length - 1] });
+    placeFood();
+    eatSound.currentTime = 0;
+    eatSound.play();
+    if (speedDelay < 200) speedDelay += 10; // tăng delay (giảm tốc độ) nhẹ
+  }
+}
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+}
+
+function placeFood() {
+  let newPos;
+  do {
+    newPos = {
+      x: Math.floor(Math.random() * tileCount),
+      y: Math.floor(Math.random() * tileCount),
+    };
+  } while (snake.some(s => s.x === newPos.x && s.y === newPos.y));
+  food = newPos;
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawGrid();
+  drawFood();
+  drawSnake();
+  if (gameOver) {
+    showLeaderboard();
+  }
+}
+
+function gameLoop() {
+  frameCount++;
+  update();
+  draw();
+  if (!gameOver) setTimeout(gameLoop, speedDelay);
+}
+
+window.addEventListener('keydown', e => {
+  if (gameOver || paused) return;
+  const key = e.key;
+  if (key === 'ArrowUp' && velocity.y !== 1) velocity = { x: 0, y: -1 };
+  else if (key === 'ArrowDown' && velocity.y !== -1) velocity = { x: 0, y: 1 };
+  else if (key === 'ArrowLeft' && velocity.x !== 1) velocity = { x: -1, y: 0 };
+  else if (key === 'ArrowRight' && velocity.x !== -1) velocity = { x: 1, y: 0 };
+  moveSound.currentTime = 0;
+  moveSound.play();
+});
+</script>
+</body>
+</html>
